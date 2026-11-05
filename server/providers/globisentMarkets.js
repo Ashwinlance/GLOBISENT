@@ -241,8 +241,15 @@ export function createGlobisentMarketsMiddleware({ fetchImpl = globalThis.fetch,
   return middleware;
 }
 
+let sharedMarkets = null;
+/** One markets service per process, shared by the route and the tour. */
+export function sharedGlobisentMarkets() {
+  sharedMarkets ??= createGlobisentMarketsMiddleware();
+  return sharedMarkets;
+}
+
 export function globisentMarketsProxy() {
-  const middleware = createGlobisentMarketsMiddleware();
+  const middleware = sharedGlobisentMarkets();
   const install = (server) => {
     server.middlewares.use('/api/globisent/markets', middleware);
   };

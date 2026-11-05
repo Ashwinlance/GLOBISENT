@@ -9,6 +9,9 @@ import { renderSection } from './domainPopup.js';
 import { COMPANY_SECTORS, SECTOR_BY_ID } from './companyCatalog.js';
 import { formatPrice, formatChange, nudgeRender } from './markets.js';
 import { createBusinessLayer, BUSINESS_KINDS } from './businesses.js';
+import { setOverlayEntries, clearOverlaySource } from '../overlays/worldOverlay.js';
+
+const LABEL_SOURCE = 'globisent-companies';
 
 const STORAGE_KEY = 'globisent.companiesOnGlobe';
 const LISTED_KEY = 'globisent.listedOnGlobe';
@@ -329,7 +332,7 @@ function createCompanyGlobeLayer({ viewer, onSelect }) {
       if (!source.show) return [];
       const out = [];
       for (const { entity, company, position, color } of entities.values()) {
-        if (entity.show) out.push({ position, name: company.name, color, priority: true });
+        if (entity.show) out.push({ id: company.id, position, name: company.name, css: SECTOR_BY_ID.get(company.sectors[0])?.color, priority: true });
       }
       return out;
     },
@@ -376,10 +379,8 @@ const LISTED_MAX_LABELS = 140;
 function createListedLayer({ viewer, onSelect, priorityLabels = () => [] }) {
   const scene = viewer.scene;
   const points = scene.primitives.add(new Cesium.PointPrimitiveCollection());
-  const labels = scene.primitives.add(new Cesium.LabelCollection());
   const color = Cesium.Color.fromCssColorString('#d6ecff').withAlpha(0.9);
   const outline = new Cesium.Color(0.02, 0.06, 0.1, 0.9);
-  const labelColor = Cesium.Color.fromCssColorString('#d6ecff');
   let items = [];
   let visible = false;
 
@@ -406,11 +407,16 @@ function createListedLayer({ viewer, onSelect, priorityLabels = () => [] }) {
   }
   const removePreRender = scene.preRender.addEventListener(updateVisibility);
 
+  /**
+   * Company names go through the app's shared world-overlay host, which
+   * projects, de-overlaps and horizon-culls every world label each frame.
+   * This only chooses the candidates: major companies first, then the
+   * nearest listed ones, when the camera is low enough to read them.
+   */
   function updateLabels() {
-    labels.removeAll();
     const height = viewer.camera.positionCartographic?.height ?? Infinity;
     if (height > LISTED_LABEL_HEIGHT_M) {
-      nudgeRender(viewer);
+      setOverlayEntries(LABEL_SOURCE, [], { moving: false });
       return;
     }
     const cameraPosition = viewer.camera.positionWC;
@@ -425,34 +431,28 @@ function createListedLayer({ viewer, onSelect, priorityLabels = () => [] }) {
       }
       return out.sort((a, b) => a[0] - b[0]);
     };
-    // Major (catalog) companies claim label space first, then the nearest listed ones.
-    const near = [...collect(priorityLabels()), ...(visible ? collect(items) : [])];
-    // Greedy screen-space placement: nearest first, skip any label that would overlap one already placed.
-    const placed = [];
-    const scratch = new Cesium.Cartesian2();
-    for (const [, item] of near) {
-      if (placed.length >= LISTED_MAX_LABELS) break;
-      const screen = Cesium.SceneTransforms.worldToWindowCoordinates(scene, item.position, scratch);
-      if (!screen) continue;
-      const box = { x: screen.x + 6, y: screen.y - 8, w: item.name.length * 6 + 8, h: 16 };
-      if (placed.some((b) => box.x < b.x + b.w && b.x < box.x + box.w && box.y < b.y + b.h && b.y < box.y + box.h)) continue;
-      placed.push(box);
-      labels.add({
-        position: item.position,
-        text: item.name,
-        font: item.priority ? '600 11px Inter, system-ui, sans-serif' : '500 10px Inter, system-ui, sans-serif',
-        fillColor: item.color ?? labelColor,
-        outlineColor: Cesium.Color.BLACK,
-        outlineWidth: 3,
-        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-        pixelOffset: new Cesium.Cartesian2(7, 0),
-        horizontalOrigin: Cesium.HorizontalOrigin.LEFT,
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-      });
-    }
+    const near = [...collect(priorityLabels()), ...(visible ? collect(items) : [])].slice(0, LISTED_MAX_LABELS);
+    setOverlayEntries(LABEL_SOURCE, near.map(([, item]) => ({
+      id: item.id,
+      position: item.position,
+      variant: 'label',
+      title: item.name,
+      accent: item.css ?? '#d6ecff',
+      priority: item.priority ? 3 : 1,
+      interactive: true,
+      accessibilityLabel: `Open the company profile for ${item.name}`,
+      activate: () => {
+        onSelect(item.id, { name: item.name });
+        return true;
+      },
+    })), { cohortLimit: LISTED_MAX_LABELS, collisionCapacity: LISTED_MAX_LABELS, moving: false });
     nudgeRender(viewer);
   }
   const removeMoveEnd = viewer.camera.moveEnd.addEventListener(updateLabels);
+  // Long flights that flow straight into more motion (tours, orbits) may never
+  // raise moveEnd; refresh on any large camera change too, so labels placed
+  // for the last place never show through the globe from the far side.
+  const removeChanged = viewer.camera.changed.addEventListener(updateLabels);
 
   const handler = new Cesium.ScreenSpaceEventHandler(scene.canvas);
   handler.setInputAction((click) => {
@@ -471,7 +471,6 @@ function createListedLayer({ viewer, onSelect, priorityLabels = () => [] }) {
     },
     setRows(rows, skip = new Set(), taken = new Map()) {
       points.removeAll();
-      labels.removeAll();
       items = [];
       const stacked = new Map(taken);
       for (const [id, name, lat, lon] of rows) {
@@ -492,7 +491,7 @@ function createListedLayer({ viewer, onSelect, priorityLabels = () => [] }) {
           scaleByDistance: new Cesium.NearFarScalar(1e5, 1.8, 1.6e7, 0.75),
           id: { globisentOwned: true, globisentListed: id, name },
         });
-        items.push({ point, position, name });
+        items.push({ id, point, position, name });
       }
       dirty = true;
       updateLabels();
@@ -507,9 +506,10 @@ function createListedLayer({ viewer, onSelect, priorityLabels = () => [] }) {
     destroy() {
       removePreRender();
       removeMoveEnd();
+      removeChanged();
       handler.destroy();
       scene.primitives.remove(points);
-      scene.primitives.remove(labels);
+      clearOverlaySource(LABEL_SOURCE);
     },
   };
 }
@@ -778,6 +778,12 @@ export function createCompanies({ section, viewer }) {
     activate() {
       ensureListed();
       return ensureCatalog();
+    },
+    /** Presentation mode: hide the dense layers without touching saved choices. */
+    setPresentation(on) {
+      listedLayer.setVisible(on ? false : listedOn);
+      businessLayer.suspend(on);
+      popup.close();
     },
     open: (id, hint) => popup.open(id, hint),
     /** Catalog companies for domain popups: by sector ids or by ISO3 country. */

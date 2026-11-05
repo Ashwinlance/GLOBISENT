@@ -7,6 +7,9 @@
  */
 import * as Cesium from 'cesium';
 import { renderSection } from './domainPopup.js';
+import { setOverlayEntries, setOverlaySourceVisible, clearOverlaySource } from '../overlays/worldOverlay.js';
+
+const OVERLAY_SOURCE = 'globisent-markets';
 
 /**
  * The app renders on demand (requestRenderMode). Entity changes made now, or
@@ -154,11 +157,12 @@ function createMarketGlobeLayer({ viewer, onSelect }) {
   const entities = new Map();
 
   function update(data) {
+    const labels = [];
     for (const exchange of data?.exchanges ?? []) {
       const pct = exchange.index?.changePct;
       const color = Cesium.Color.fromCssColorString(trend(pct) === 'up' ? UP : trend(pct) === 'down' ? DOWN : FLAT);
       const open = exchange.open === true;
-      const text = `${exchange.index?.label ?? exchange.name}  ${formatChange(pct)}${open ? '  ● OPEN' : ''}`;
+      const css = trend(pct) === 'up' ? UP : trend(pct) === 'down' ? DOWN : FLAT;
       let entity = entities.get(exchange.id);
       if (!entity) {
         entity = source.entities.add({
@@ -171,19 +175,6 @@ function createMarketGlobeLayer({ viewer, onSelect }) {
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
             scaleByDistance: new Cesium.NearFarScalar(2e5, 1.4, 2.5e7, 0.8),
           },
-          label: {
-            font: '600 12px "JetBrains Mono", Consolas, monospace',
-            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-            outlineColor: Cesium.Color.BLACK,
-            outlineWidth: 3,
-            showBackground: true,
-            backgroundColor: new Cesium.Color(0.02, 0.07, 0.11, 0.72),
-            backgroundPadding: new Cesium.Cartesian2(6, 4),
-            pixelOffset: new Cesium.Cartesian2(0, -18),
-            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-            disableDepthTestDistance: Number.POSITIVE_INFINITY,
-            scaleByDistance: new Cesium.NearFarScalar(2e5, 1.1, 2.5e7, 0.72),
-          },
         });
         entity.globisentMarket = exchange.id;
         entity.globisentOwned = true;
@@ -191,9 +182,25 @@ function createMarketGlobeLayer({ viewer, onSelect }) {
       }
       entity.point.color = color;
       entity.point.outlineColor = open ? Cesium.Color.WHITE : new Cesium.Color(0.05, 0.1, 0.14, 0.9);
-      entity.label.text = text;
-      entity.label.fillColor = color;
+      // Text goes through the app's shared world-overlay host, which places,
+      // de-overlaps and horizon-culls every world label in one pass.
+      labels.push({
+        id: exchange.id,
+        position: Cesium.Cartesian3.fromDegrees(exchange.lon, exchange.lat, 0),
+        variant: 'label',
+        title: `${exchange.index?.label ?? exchange.name} ${formatChange(pct)}`,
+        details: open ? ['OPEN NOW'] : [],
+        accent: css,
+        priority: open ? 2 : 1,
+        interactive: true,
+        accessibilityLabel: `${exchange.name}: ${exchange.index?.label ?? ''} ${formatChange(pct)}`,
+        activate: () => {
+          onSelect(exchange.id);
+          return true;
+        },
+      });
     }
+    setOverlayEntries(OVERLAY_SOURCE, labels, { cohortLimit: 40, collisionCapacity: 40, moving: false });
     visibilityDirty = true;
     nudgeRender(viewer);
   }
@@ -238,11 +245,13 @@ function createMarketGlobeLayer({ viewer, onSelect }) {
     update,
     setVisible(on) {
       source.show = Boolean(on);
+      setOverlaySourceVisible(OVERLAY_SOURCE, Boolean(on));
       nudgeRender(viewer);
     },
     destroy() {
       removePreRender();
       handler.destroy();
+      clearOverlaySource(OVERLAY_SOURCE);
       viewer.dataSources.remove(source, true);
     },
   };

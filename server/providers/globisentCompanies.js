@@ -676,8 +676,15 @@ export function createGlobisentCompaniesMiddleware({
   return { companiesMiddleware, companyMiddleware, getCatalog, getCompany, getListed, search };
 }
 
+let sharedCompanies = null;
+/** One companies service per process, shared by the routes and the tour. */
+export function sharedGlobisentCompanies() {
+  sharedCompanies ??= createGlobisentCompaniesMiddleware({ cacheFile: COMPANY_CACHE_FILE, listedFile: LISTED_CACHE_FILE });
+  return sharedCompanies;
+}
+
 export function globisentCompaniesProxy() {
-  const service = createGlobisentCompaniesMiddleware({ cacheFile: COMPANY_CACHE_FILE, listedFile: LISTED_CACHE_FILE });
+  const service = sharedGlobisentCompanies();
   const install = (server) => {
     // Warm the directory in the background so the first COMPANIES view is quick.
     setTimeout(() => service.getCatalog().catch(() => {}), 3000).unref?.();

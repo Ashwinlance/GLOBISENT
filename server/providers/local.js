@@ -36,6 +36,7 @@ import { globisentPlaceProxy } from './globisentPlace.js';
 import { globisentMarketsProxy } from './globisentMarkets.js';
 import { globisentCompaniesProxy } from './globisentCompanies.js';
 import { globisentBusinessesProxy } from './globisentBusinesses.js';
+import { globisentTourProxy } from './globisentTour.js';
 
 /**
  * Construct the local provider plugins in their established order.
@@ -91,6 +92,7 @@ function localProviderPlugins({
     globisentMarketsProxy(),
     globisentCompaniesProxy(),
     globisentBusinessesProxy(),
+    globisentTourProxy(),
     keySetupEndpoint(),
   ];
 }

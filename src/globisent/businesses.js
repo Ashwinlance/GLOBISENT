@@ -8,6 +8,9 @@
 import * as Cesium from 'cesium';
 import { renderSection } from './domainPopup.js';
 import { nudgeRender } from './markets.js';
+import { setOverlayEntries, clearOverlaySource } from '../overlays/worldOverlay.js';
+
+const LABEL_SOURCE = 'globisent-businesses';
 
 export const BUSINESS_KINDS = Object.freeze({
   office: { icon: '🏢', label: 'Offices & companies', color: '#35c9f2' },
@@ -184,12 +187,12 @@ function createBusinessPopup({ viewer, openCompany }) {
 export function createBusinessLayer({ viewer, openCompany, onStatus = () => {} }) {
   const scene = viewer.scene;
   const points = scene.primitives.add(new Cesium.PointPrimitiveCollection());
-  const labels = scene.primitives.add(new Cesium.LabelCollection());
   const popup = createBusinessPopup({ viewer, openCompany });
   const tiles = new Map(); // key -> { points: PointPrimitive[], rows }
   const loading = new Set();
   const failed = new Map();
   let enabled = readFlag();
+  let suspended = false;
   let generation = 0;
   let queue = Promise.resolve();
   const colors = Object.fromEntries(Object.entries(BUSINESS_KINDS).map(([k, v]) => [k, Cesium.Color.fromCssColorString(v.color)]));
@@ -236,40 +239,36 @@ export function createBusinessLayer({ viewer, openCompany, onStatus = () => {} }
     }
   }
 
+  /** Names go through the app's shared world-overlay host; this only picks the nearest candidates. */
   function updateLabels() {
-    labels.removeAll();
-    if (!enabled || cameraHeight() > LABEL_HEIGHT_M) return;
+    if (!enabled || suspended || cameraHeight() > LABEL_HEIGHT_M) {
+      setOverlayEntries(LABEL_SOURCE, [], { moving: false });
+      return;
+    }
     const cameraPosition = viewer.camera.positionWC;
     const candidates = [];
     for (const { points: list } of tiles.values()) {
       for (const p of list) candidates.push([Cesium.Cartesian3.distance(cameraPosition, p.position), p]);
     }
     candidates.sort((a, b) => a[0] - b[0]);
-    const placed = [];
-    const scratch = new Cesium.Cartesian2();
-    const { clientWidth: width, clientHeight: height } = scene.canvas;
-    for (const [, p] of candidates) {
-      if (placed.length >= MAX_LABELS) break;
-      const screen = Cesium.SceneTransforms.worldToWindowCoordinates(scene, p.position, scratch);
-      if (!screen || screen.x < 0 || screen.y < 0 || screen.x > width || screen.y > height) continue;
+    setOverlayEntries(LABEL_SOURCE, candidates.slice(0, MAX_LABELS).map(([, p]) => {
       const row = p.id.globisentBusiness;
-      const text = `${(BUSINESS_KINDS[row[4]] ?? BUSINESS_KINDS.other).icon} ${row[1]}`;
-      const box = { x: screen.x + 6, y: screen.y - 8, w: text.length * 6 + 14, h: 16 };
-      if (placed.some((b) => box.x < b.x + b.w && b.x < box.x + box.w && box.y < b.y + b.h && b.y < box.y + box.h)) continue;
-      placed.push(box);
-      labels.add({
+      const kind = BUSINESS_KINDS[row[4]] ?? BUSINESS_KINDS.other;
+      return {
+        id: row[0],
         position: p.position,
-        text,
-        font: '500 11px Inter, system-ui, sans-serif',
-        fillColor: Cesium.Color.WHITE,
-        outlineColor: Cesium.Color.BLACK,
-        outlineWidth: 3,
-        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-        pixelOffset: new Cesium.Cartesian2(8, 0),
-        horizontalOrigin: Cesium.HorizontalOrigin.LEFT,
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-      });
-    }
+        variant: 'label',
+        title: `${kind.icon} ${row[1]}`,
+        accent: kind.color,
+        priority: row[4] === 'office' || row[4] === 'industry' || row[4] === 'bank' ? 2 : 1,
+        interactive: true,
+        accessibilityLabel: `${kind.label}: ${row[1]}`,
+        activate: () => {
+          popup.open(row);
+          return true;
+        },
+      };
+    }), { cohortLimit: MAX_LABELS, collisionCapacity: MAX_LABELS, moving: false });
   }
 
   function totalBusinesses() {
@@ -279,17 +278,17 @@ export function createBusinessLayer({ viewer, openCompany, onStatus = () => {} }
   }
 
   function refresh() {
-    const visible = enabled && cameraHeight() <= LOAD_HEIGHT_M;
+    const visible = enabled && !suspended && cameraHeight() <= LOAD_HEIGHT_M;
     points.show = visible;
-    labels.show = visible;
-    if (!enabled) {
+    if (!enabled || suspended) {
       onStatus('');
+      updateLabels();
       nudgeRender(viewer);
       return;
     }
     if (!visible) {
       onStatus(`Zoom in below ${LOAD_HEIGHT_M / 1000} km over any city to load its local businesses.`);
-      labels.removeAll();
+      updateLabels();
       nudgeRender(viewer);
       return;
     }
@@ -358,12 +357,18 @@ export function createBusinessLayer({ viewer, openCompany, onStatus = () => {} }
       refresh();
     },
     refresh,
+    /** Hide without changing the saved choice (presentation mode). */
+    suspend(on) {
+      suspended = Boolean(on);
+      if (suspended) generation += 1;
+      refresh();
+    },
     destroy() {
       removeMoveEnd();
       handler.destroy();
       popup.destroy();
       scene.primitives.remove(points);
-      scene.primitives.remove(labels);
+      clearOverlaySource(LABEL_SOURCE);
     },
   };
 }

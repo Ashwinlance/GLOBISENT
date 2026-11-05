@@ -56,3 +56,11 @@ test('business tiles cover the view from the centre outwards', async () => {
   const narrow = tilesForView({ lat: 19.065, lon: 72.835 }, { west: 72.83, east: 72.84, south: 19.06, north: 19.07 }, 9);
   assert.ok(narrow.every(([i, j]) => i * TILE_DEG <= 19.07 && j * TILE_DEG <= 72.84), 'tiles outside the view are skipped');
 });
+
+test('presentation framing pulls back for wide events and leans in for buildings', async () => {
+  const { framingFor } = await import('./presentation.js');
+  assert.deepEqual(framingFor({ height: 900000 }), { pitch: -75, range: 900000 });
+  assert.deepEqual(framingFor({ height: 60000 }), { pitch: -55, range: 60000 });
+  assert.deepEqual(framingFor({ height: 4000 }), { pitch: -35, range: 4000 });
+  assert.deepEqual(framingFor({ height: 200 }), { pitch: -35, range: 1500 });
+});

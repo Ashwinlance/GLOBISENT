@@ -379,3 +379,32 @@ button.gx-mkt-row:hover, button.gx-mkt-row:focus-visible { background: rgba(53, 
 .gx-co-legend-item { display: inline-flex; align-items: center; gap: 4px; }
 .gx-co-legend-item i { width: 7px; height: 7px; border-radius: 50%; }
 #gx-co-local-status[hidden] { display: none; }
+
+/* ── Presentation mode ─────────────────────────────────────────────────────── */
+.gx-present-button { color: #06131b !important; background: var(--gx-cyan) !important; border-color: var(--gx-cyan) !important; }
+/* Hide every panel except the globe, the tour card and the map credits (attribution stays visible). */
+/* The app's .gev-view wrappers are display: contents (no box of their own), so hide their children directly. */
+body.gx-presenting > *:not(.gx-tour):not([id="cesium-credits"]):not(.gev-view),
+body.gx-presenting > .gev-view:not(:has(#cesiumContainer)) > *,
+body.gx-presenting > .gev-view:has(#cesiumContainer) > *:not(#cesiumContainer) { opacity: 0 !important; visibility: hidden !important; pointer-events: none !important; }
+.gx-tour { position: fixed; inset: 0; z-index: 1300; pointer-events: none; font-family: var(--gx-sans); }
+.gx-tour[hidden] { display: none; }
+.gx-tour-card { position: absolute; left: clamp(16px, 4vw, 48px); bottom: clamp(70px, 10vh, 110px); max-width: min(560px, calc(100vw - 32px)); padding: 20px 24px; border: 1px solid var(--gx-line); border-left: 3px solid var(--gx-cyan); border-radius: 12px; color: var(--gx-text); background: linear-gradient(135deg, rgba(4, 14, 22, .88), rgba(6, 24, 36, .78)); box-shadow: 0 18px 50px rgba(0, 0, 0, .5); backdrop-filter: blur(6px); }
+.gx-tour-card[data-trend="up"] { border-left-color: var(--gx-green); }
+.gx-tour-card[data-trend="down"] { border-left-color: var(--gx-red); }
+.gx-tour-in { animation: gx-tour-in .7s ease-out both; }
+@keyframes gx-tour-in { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .gx-tour-in { animation: none; } }
+.gx-tour-eyebrow { color: var(--gx-cyan-soft); font: 700 11px var(--gx-mono); letter-spacing: .14em; }
+.gx-tour-title { margin: 8px 0 6px; font: 700 clamp(22px, 3.2vw, 34px)/1.15 var(--gx-mono); letter-spacing: .02em; overflow-wrap: anywhere; }
+.gx-tour-subtitle { margin: 0; color: #cfe6f0; font-size: clamp(13px, 1.5vw, 16px); line-height: 1.5; }
+.gx-tour-detail { margin: 6px 0 0; color: #8fb0be; font-size: 12px; line-height: 1.5; }
+.gx-tour-detail[hidden] { display: none; }
+.gx-tour-foot { display: flex; justify-content: space-between; gap: 12px; margin-top: 14px; color: #6f8f9e; font: 600 10px var(--gx-mono); }
+.gx-tour-controls { position: absolute; right: clamp(16px, 3vw, 40px); bottom: clamp(70px, 10vh, 110px); display: flex; gap: 6px; pointer-events: auto; }
+.gx-tour-controls button { min-width: 42px; min-height: 36px; padding: 0 12px; border: 1px solid var(--gx-line); border-radius: 8px; color: var(--gx-cyan-soft); background: rgba(4, 14, 22, .85); font: 700 11px var(--gx-mono); cursor: pointer; }
+.gx-tour-controls button:hover, .gx-tour-controls button:focus-visible { color: #06131b; background: var(--gx-cyan); }
+.gx-tour-controls button[hidden] { display: none; }
+.gx-tour-brand { position: absolute; top: 18px; left: 50%; transform: translateX(-50%); padding: 6px 14px; border: 1px solid rgba(54, 190, 231, .25); border-radius: 999px; color: #9fc4d3; background: rgba(4, 14, 22, .6); font: 600 11px var(--gx-mono); letter-spacing: .08em; white-space: nowrap; }
+.gx-tour-brand b { color: var(--gx-cyan-soft); }
+@media (max-width: 700px) { .gx-tour-controls { bottom: 16px; right: 16px; } .gx-tour-card { bottom: 64px; } .gx-tour-brand { display: none; } }

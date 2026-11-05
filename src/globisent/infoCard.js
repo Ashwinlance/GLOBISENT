@@ -87,6 +87,7 @@ export function createInfoCard({ viewer, onEnabledChange = () => {} }) {
   document.body.append(card);
 
   let enabled = readEnabled();
+  let suspended = false;
   let request = null;
   let current = null;
   let lastSelection = { id: null, at: 0 };
@@ -181,7 +182,7 @@ export function createInfoCard({ viewer, onEnabledChange = () => {} }) {
   // Additive: a second handler on the canvas; Cesium keeps the app's own.
   const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
   handler.setInputAction((click) => {
-    if (!enabled) return;
+    if (!enabled || suspended) return;
     const clickedAt = Date.now();
     let picked = null;
     try {
@@ -209,7 +210,7 @@ export function createInfoCard({ viewer, onEnabledChange = () => {} }) {
   // the card for that object. Tracked layers write the store right after the
   // event, so read it on the next tick.
   const onSelected = () => {
-    if (!enabled) return;
+    if (!enabled || suspended) return;
     setTimeout(() => {
       const store = getContextStore();
       const record = store.selectedEntityId ? store.entities.get(store.selectedEntityId) : null;
@@ -232,6 +233,11 @@ export function createInfoCard({ viewer, onEnabledChange = () => {} }) {
       return enabled;
     },
     setEnabled,
+    /** Ignore clicks without changing the saved choice (presentation mode). */
+    suspend(on) {
+      suspended = Boolean(on);
+      if (suspended) close();
+    },
     showPoint: (point) => show({ point, record: null }),
     close,
     destroy() {

@@ -5,6 +5,7 @@ import { createDomainPopup } from './domainPopup.js';
 import { createInfoCard } from './infoCard.js';
 import { createMarkets } from './markets.js';
 import { createCompanies } from './companies.js';
+import { createPresentation } from './presentation.js';
 
 const REFRESH_MS = 5 * 60 * 1000;
 // Opening the hub or switching back to the tab reuses results this recent.
@@ -110,7 +111,8 @@ export function installGlobisentHub({ viewer, layers = null }) {
       <span class="gx-mark">G</span><span>GLOBISENT</span><span class="gx-live-dot" aria-hidden="true"></span>
     </button>
     <button class="gx-gesture-shortcut" id="gx-gesture-shortcut" type="button" title="Toggle hand gesture control">HAND CONTROL</button>
-    <button class="gx-gesture-shortcut" id="gx-clickinfo-toggle" type="button" title="Show an information card when you click the globe" aria-pressed="true">CLICK INFO: ON</button>`;
+    <button class="gx-gesture-shortcut" id="gx-clickinfo-toggle" type="button" title="Show an information card when you click the globe" aria-pressed="true">CLICK INFO: ON</button>
+    <button class="gx-gesture-shortcut gx-present-button" id="gx-present" type="button" title="Hide the panels and play a cinematic tour of live world data (Esc to exit)">▶ PRESENT</button>`;
   document.body.append(launcher);
 
   const panel = el('aside', 'gx-panel');
@@ -207,6 +209,21 @@ export function installGlobisentHub({ viewer, layers = null }) {
     onEnabledChange: syncClickInfo,
   });
   syncClickInfo(infoCard.enabled);
+
+  const presentation = createPresentation({
+    viewer,
+    onEnter: () => {
+      closePanel();
+      domainPopup.close();
+      infoCard.suspend(true);
+      companies.setPresentation(true);
+    },
+    onExit: () => {
+      infoCard.suspend(false);
+      companies.setPresentation(false);
+    },
+  });
+  launcher.querySelector('#gx-present').addEventListener('click', () => presentation.start());
   clickInfoToggle.addEventListener('click', () => infoCard.setEnabled(!infoCard.enabled));
 
   function openPanel() {
@@ -389,6 +406,7 @@ export function installGlobisentHub({ viewer, layers = null }) {
     document.removeEventListener('keydown', onKeyDown);
     document.removeEventListener('visibilitychange', onVisibility);
     domainPopup.destroy();
+    presentation.destroy();
     markets.destroy();
     companies.destroy();
     infoCard.destroy();
