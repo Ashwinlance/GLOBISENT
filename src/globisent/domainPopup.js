@@ -170,11 +170,14 @@ export function createDomainPopup({ layers = null, companies = null } = {}) {
   async function renderKeyBox(slot, domain) {
     const spec = domain.key;
     if (!spec) return;
+    let partial = false;
     const missing = async () => {
       try {
         const r = await fetch(spec.status, { cache: 'no-store' });
         const j = await r.json().catch(() => null);
-        return j?.status === 'missing-key';
+        // A keyless fallback (e.g. Baltic ships) still reports keyMissing.
+        partial = j?.keyMissing === true && j?.status !== 'missing-key';
+        return j?.status === 'missing-key' || j?.keyMissing === true;
       } catch {
         return false;
       }
@@ -183,7 +186,7 @@ export function createDomainPopup({ layers = null, companies = null } = {}) {
     const form = el('form', 'gx-agent-key');
     form.append(el('strong', '', `Connect ${spec.what}`));
     const p = el('p');
-    p.append(`${spec.name} needs a free API key. Create one at `);
+    p.append(partial && spec.partial ? `${spec.partial} For ${spec.what} worldwide, ${spec.name} needs a free API key. Create one at ` : `${spec.name} needs a free API key. Create one at `);
     const a = el('a', '', `${new URL(spec.url).host} ↗`);
     a.href = spec.url;
     a.target = '_blank';

@@ -108,7 +108,7 @@ Everything above works without keys. Some inherited layers unlock with free or p
 
 | Key | Unlocks | Cost |
 |---|---|---|
-| `AISSTREAM_API_KEY` | Live ships worldwide | Free ([aisstream.io](https://aisstream.io/apikeys)) |
+| `AISSTREAM_API_KEY` | Live ships worldwide (without it, Baltic Sea ships still show from Finland's keyless Digitraffic feed) | Free ([aisstream.io](https://aisstream.io/apikeys)) |
 | `GOOGLE_MAPS_API_KEY` | Photorealistic 3D cities, place search | Paid, with a free tier |
 | `OPENAI_API_KEY` / `GEMINI_API_KEY` | Voice control and HUD summaries | Paid |
 

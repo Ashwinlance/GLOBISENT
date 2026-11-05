@@ -26,7 +26,7 @@ export const DOMAINS = Object.freeze([
     id: 'maritime', name: 'Maritime & vessels', status: 'map', news: 'transport',
     description: 'AIS vessel positions and live-vessel layers; provider coverage limits apply.',
     // Live ships need a free AISStream key; the popup offers to save one.
-    key: { env: 'AISSTREAM_API_KEY', name: 'AISStream', url: 'https://aisstream.io/apikeys', status: '/api/vessels/status', what: 'live ships' },
+    key: { env: 'AISSTREAM_API_KEY', name: 'AISStream', url: 'https://aisstream.io/apikeys', status: '/api/vessels/status', what: 'live ships', partial: 'Ships in the Baltic Sea are already shown without a key (Digitraffic, Finland).' },
     layers: ['ais-live-vessels', 'submarine-cables'],
     indicators: ['IS.SHP.GOOD.TU'],
   },

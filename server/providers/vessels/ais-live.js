@@ -11,6 +11,7 @@ import {
   aisStreamRows,
   newestAisPositionAt,
 } from './ais-store.js';
+import { sharedDigitrafficFeed, DIGITRAFFIC_SOURCE } from './digitraffic.js';
 // ---------------------------------------------------------------------------
 // AISStream live vessel cache state
 // ---------------------------------------------------------------------------
@@ -114,6 +115,37 @@ export function aisLiveProxy() {
           AISSTREAM_CACHE_MAX,
           AISSTREAM_CACHE_MAX,
         );
+        // No AISStream key: serve keyless Baltic ships from Digitraffic so the
+        // layer is never empty. `keyMissing` tells key-setup UIs that a free
+        // AISStream key would unlock ships worldwide.
+        if (!process.env.AISSTREAM_API_KEY) {
+          const fallback = await sharedDigitrafficFeed().snapshot(maxRows);
+          const ok = fallback.rows.length > 0;
+          res.statusCode = ok ? 200 : 503;
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-store');
+          res.setHeader('X-Feed-Source', 'Digitraffic');
+          res.end(
+            JSON.stringify({
+              rows: fallback.rows,
+              source: DIGITRAFFIC_SOURCE,
+              status: ok ? 'live' : 'missing-key',
+              error: ok ? null : fallback.error || 'AISSTREAM_API_KEY is not set',
+              keyMissing: true,
+              coverage: 'baltic',
+              refreshing: false,
+              newestPositionAt: newestAisPositionAt(fallback.rows),
+              lastMessageAt: fallback.fetchedAt,
+              silentForMs: fallback.fetchedAt ? Date.now() - fallback.fetchedAt : null,
+              reconnectAttempt: 0,
+              nextAttemptAt: null,
+              staleAfterMs: AISSTREAM_STALE_MS,
+              watchdog: 'off',
+            }),
+          );
+          return;
+        }
+
         const rows = aisStreamRows(maxRows);
 
         const feed = aisStreamStatusSnapshot();
