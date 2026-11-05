@@ -36,7 +36,7 @@ export const NEWS_CATEGORIES = Object.freeze({
 
 const GDELT_ENDPOINT = 'https://api.gdeltproject.org/api/v2/doc/doc';
 
-function safeSearchPhrase(value) {
+export function safeSearchPhrase(value) {
   return String(value ?? '')
     .trim()
     .replace(/[\r\n\t]/g, ' ')
@@ -46,16 +46,48 @@ function safeSearchPhrase(value) {
     .slice(0, 100);
 }
 
+/**
+ * GDELT treats an unquoted multi-word term inside an OR group as separate
+ * keywords, which breaks the OR grouping (and can make GDELT reject the query).
+ * Quote every multi-word term so `(a OR interest rates)` becomes
+ * `(a OR "interest rates")`.
+ */
+export function quoteMultiWordTerms(query) {
+  return String(query).replace(/\(([^()]*)\)/g, (_, inner) => {
+    const terms = inner.split(/\s+OR\s+/).map((term) => {
+      const trimmed = term.trim();
+      return /\s/.test(trimmed) && !/^".*"$/.test(trimmed) ? `"${trimmed}"` : trimmed;
+    });
+    return `(${terms.join(' OR ')})`;
+  });
+}
+
+/** Normalize UI filter input into a known category/region and a safe phrase. */
+export function normalizeNewsFilters({ category = 'all', region = 'global', search = '' } = {}) {
+  return {
+    category: Object.hasOwn(NEWS_CATEGORIES, category) ? category : 'all',
+    region: region === 'india' ? 'india' : 'global',
+    search: safeSearchPhrase(search),
+  };
+}
+
+function newsQuery({ category, region, search }) {
+  const filters = normalizeNewsFilters({ category, region, search });
+  // "All topics" + a search phrase means "news about this phrase": the broad
+  // topic list would otherwise drown the phrase (Google News treats it loosely).
+  const parts = filters.category === 'all' && filters.search
+    ? []
+    : [quoteMultiWordTerms(NEWS_CATEGORIES[filters.category].query)];
+  if (filters.region === 'india') parts.push('India');
+  if (filters.search) parts.push(`"${filters.search}"`);
+  return parts.join(' ');
+}
+
 /** Build a constrained GDELT search URL. Region=India means coverage about India, not only Indian publishers. */
 export function buildNewsUrl({ category = 'all', region = 'global', search = '' } = {}) {
-  const selected = NEWS_CATEGORIES[category] ?? NEWS_CATEGORIES.all;
-  const parts = [selected.query];
-  if (region === 'india') parts.push('India');
-  const phrase = safeSearchPhrase(search);
-  if (phrase) parts.push(`"${phrase}"`);
 
   const url = new URL(GDELT_ENDPOINT);
-  url.searchParams.set('query', parts.join(' '));
+  url.searchParams.set('query', newsQuery({ category, region, search }));
   url.searchParams.set('mode', 'artlist');
   url.searchParams.set('format', 'json');
   url.searchParams.set('maxrecords', '75');
@@ -109,4 +141,61 @@ export function normalizeNewsResponse(payload) {
   }
 
   return normalized;
+}
+
+const GOOGLE_NEWS_ENDPOINT = 'https://news.google.com/rss/search';
+
+/**
+ * Fallback search URL for the Google News RSS feed, used only when GDELT is
+ * rate-limiting or unreachable. Google News supports the same OR/quote syntax.
+ * Note: Google's feed terms limit it to personal, non-commercial feed reading.
+ */
+export function buildGoogleNewsUrl({ category = 'all', region = 'global', search = '' } = {}) {
+  const url = new URL(GOOGLE_NEWS_ENDPOINT);
+  url.searchParams.set('q', `${newsQuery({ category, region, search })} when:1d`);
+  const india = region === 'india';
+  url.searchParams.set('hl', india ? 'en-IN' : 'en-US');
+  url.searchParams.set('gl', india ? 'IN' : 'US');
+  url.searchParams.set('ceid', india ? 'IN:en' : 'US:en');
+  return url.toString();
+}
+
+const XML_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+
+function decodeXml(value) {
+  return String(value ?? '')
+    .replace(/^<!\[CDATA\[([\s\S]*)\]\]>$/, '$1')
+    .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (match, entity) => {
+      if (entity[0] === '#') {
+        const code = entity[1].toLowerCase() === 'x' ? parseInt(entity.slice(2), 16) : parseInt(entity.slice(1), 10);
+        return Number.isFinite(code) ? String.fromCodePoint(code) : match;
+      }
+      return XML_ENTITIES[entity.toLowerCase()] ?? match;
+    })
+    .trim();
+}
+
+function rssTag(item, tag) {
+  const match = new RegExp(`<${tag}(\\s[^>]*)?>([\\s\\S]*?)</${tag}>`, 'i').exec(item);
+  return match ? { attrs: match[1] ?? '', text: decodeXml(match[2]) } : null;
+}
+
+/** Parse a Google News RSS document into the same GDELT-shaped payload. */
+export function parseGoogleNewsRss(xml) {
+  const articles = [];
+  for (const [, item] of String(xml ?? '').matchAll(/<item>([\s\S]*?)<\/item>/gi)) {
+    const source = rssTag(item, 'source');
+    const sourceUrl = /url="([^"]+)"/.exec(source?.attrs ?? '')?.[1];
+    let domain = source?.text ?? '';
+    try { if (sourceUrl) domain = new URL(decodeXml(sourceUrl)).hostname.replace(/^www\./, ''); } catch { /* keep name */ }
+    let title = rssTag(item, 'title')?.text ?? '';
+    if (source?.text && title.endsWith(` - ${source.text}`)) title = title.slice(0, -(source.text.length + 3));
+    articles.push({
+      title,
+      url: rssTag(item, 'link')?.text,
+      domain,
+      seendate: rssTag(item, 'pubDate')?.text,
+    });
+  }
+  return { articles };
 }

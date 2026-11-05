@@ -215,6 +215,26 @@ export function createStreetLevelLayer({
   const activeEntries = () =>
     [...state.providers.values()].filter((entry) => entry.on);
 
+  /**
+   * GLOBISENT: until someone clicks a source chip themselves, a lit provider that
+   * turns out to have no key hands over to a keyless one (KartaView first,
+   * then Panoramax), so Street Level works out of the box without a token.
+   */
+  let sourceChosenByUser = false;
+  const KEYLESS_FALLBACK_ORDER = ['kartaview', 'panoramax'];
+  function fallBackFromMissingKey(entry) {
+    if (sourceChosenByUser || !entry.on || !entry.def.requiresKeyId) return;
+    if (entry.status?.configured !== false) return;
+    const fallback = KEYLESS_FALLBACK_ORDER.map((id) => state.providers.get(id)).find(
+      (candidate) => candidate && !candidate.def.requiresKeyId && providerAvailable(candidate),
+    );
+    if (!fallback) return;
+    const before = litIds();
+    switchProvider(entry, false);
+    switchProvider(fallback, true);
+    sourceChanged(before);
+  }
+
   /** A provider's key status. A hung server must not hold LOADING, or the next check, forever. */
   function checkStatus(entry) {
     entry.statusCheck ||= (async () => {
@@ -225,6 +245,7 @@ export function createStreetLevelLayer({
       } catch {
         entry.status = null;
       }
+      fallBackFromMissingKey(entry);
       notify();
     })().finally(() => {
       entry.statusCheck = null;
@@ -297,6 +318,7 @@ export function createStreetLevelLayer({
   function setProviderEnabled(providerId, on) {
     const entry = state.providers.get(providerId);
     if (!entry) return false;
+    sourceChosenByUser = true;
     const before = litIds();
     const next = on !== false;
     if (next)
@@ -590,6 +612,9 @@ export function createStreetLevelLayer({
       for (const [id, entry] of state.providers)
         if (id !== lit) switchProvider(entry, false);
       if (lit) switchProvider(state.providers.get(lit), true);
+      // Saved state always records Mapillary as lit by default; without its
+      // key, hand over to a keyless source again.
+      if (lit) fallBackFromMissingKey(state.providers.get(lit));
       sourceChanged(before);
       notify();
       setCoverageFilter(decoded.filter);

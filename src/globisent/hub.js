@@ -1,34 +1,18 @@
-import { buildNewsUrl, normalizeNewsResponse, NEWS_CATEGORIES } from './news.js';
+import { NEWS_CATEGORIES } from './news.js';
 import { HandGestureGlobeController } from './handGestures.js';
+import { DOMAINS, DOMAIN_STATUS } from './domains.js';
+import { createDomainPopup } from './domainPopup.js';
+import { createInfoCard } from './infoCard.js';
+import { createMarkets } from './markets.js';
+import { createCompanies } from './companies.js';
 
 const REFRESH_MS = 5 * 60 * 1000;
+// Opening the hub or switching back to the tab reuses results this recent.
+const RECENT_MS = 60 * 1000;
+const FILTER_DEBOUNCE_MS = 450;
+const NEWS_ENDPOINT = '/api/globisent/news';
+const PROVIDER_LABELS = { gdelt: 'GDELT', 'google-news': 'Google News (fallback)' };
 
-const DOMAINS = [
-  ['Aviation & aircraft', 'Connected', 'Flights, aircraft identity, military traffic where openly published.'],
-  ['Maritime & vessels', 'Connected', 'AIS vessel positions and related live-vessel layers; provider limits apply.'],
-  ['Satellites & launches', 'Connected', 'Orbital propagation, satellite passes and launch information.'],
-  ['Weather, climate & atmosphere', 'Connected', 'Forecast wind, observed weather products, air quality and cyclone advisories.'],
-  ['Earthquakes, fires & disasters', 'Connected', 'Seismic events, active fire detections and available event perimeters.'],
-  ['Public cameras & street imagery', 'Connected', 'Mapped public camera locations and supported street-level imagery providers.'],
-  ['Roads, traffic & mobility', 'Connected', 'Traffic, transit, bike-share and supported route/mobility feeds.'],
-  ['Infrastructure & utilities', 'Reference layers', 'Dams, datacenters, installations, power and submarine cable datasets. Licensing varies.'],
-  ['News & world events', 'Connected', 'GDELT article search, global and India topic focus, 24-hour article window.'],
-  ['Country profiles & event timelines', 'Next integration', 'Country reference profiles, 24-hour event timelines and corroborated geographic event records; no synthetic instability scores.'],
-  ['Government, elections & policy', 'Next integration', 'Official government publications, election commissions and legislative sources required.'],
-  ['Geopolitics & conflict analysis', 'Next integration', 'Verified event sources, transparent methodology and corroboration required.'],
-  ['Crime & public safety', 'Next integration', 'Official public-safety bulletins and court or agency sources required.'],
-  ['Economy, markets & commodities', 'Next integration', 'Dedicated market, macroeconomic, currency and commodity sources required.'],
-  ['Business, trade & industry', 'Next integration', 'Company, trade, customs and industry data sources required.'],
-  ['Public health & medicine', 'Next integration', 'Public-health agencies, disease surveillance and medical research sources required.'],
-  ['Science, research & education', 'Next integration', 'Scholarly indexes, research repositories and education datasets required.'],
-  ['Technology, AI & cybersecurity', 'Next integration', 'Technology research, incident advisories and vulnerability catalogs required.'],
-  ['Agriculture, food & water', 'Next integration', 'Crop, food-price, fisheries, water and food-security sources required.'],
-  ['Population & demographics', 'Next integration', 'National statistical agencies and licensed population datasets required.'],
-  ['Environment & biodiversity', 'Next integration', 'Conservation, ecosystem, pollution and biodiversity datasets required.'],
-  ['Transport, travel & tourism', 'Next integration', 'Rail, road, tourism, airport operations and visitor-statistics sources required.'],
-  ['Culture, media & entertainment', 'Next integration', 'Publisher, event, cultural-institution and entertainment sources required.'],
-  ['Sports & competitions', 'Next integration', 'Licensed schedules, results and competition data providers required.'],
-];
 
 const el = (tag, className, text) => {
   const node = document.createElement(tag);
@@ -82,18 +66,41 @@ function renderArticles(container, articles) {
   }
 }
 
-function renderDomains(container) {
+function describeGestureError(error) {
+  switch (error?.name) {
+    case 'NotAllowedError':
+    case 'SecurityError':
+      return 'Camera permission was blocked. Click the camera icon in the browser address bar and allow it for this site, and check Windows Settings › Privacy & security › Camera (allow desktop apps / your browser). Then press Enable again.';
+    case 'NotFoundError':
+    case 'OverconstrainedError':
+      return 'No webcam was found. Connect a camera and press Enable again.';
+    case 'NotReadableError':
+    case 'AbortError':
+      return 'The webcam is busy in another app (Teams, Zoom, Camera…). Close it and press Enable again.';
+    default:
+      if (/dynamically imported module|Failed to fetch/i.test(error?.message ?? '')) {
+        return 'Could not download the hand-tracking model (MediaPipe). Check the internet connection and press Enable again.';
+      }
+      return error?.message ?? 'Unable to start hand tracking.';
+  }
+}
+
+function renderDomains(container, onOpen) {
   container.replaceChildren();
-  for (const [name, status, description] of DOMAINS) {
-    const card = el('div', 'gx-domain-card');
+  for (const domain of DOMAINS) {
+    const card = el('button', 'gx-domain-card');
+    card.type = 'button';
+    card.dataset.domain = domain.id;
+    card.setAttribute('aria-haspopup', 'dialog');
     const head = el('div', 'gx-domain-head');
-    head.append(el('strong', '', name), el('span', `gx-status gx-status-${status.toLowerCase().replaceAll(' ', '-')}`, status));
-    card.append(head, el('p', '', description));
+    head.append(el('strong', '', domain.name), el('span', `gx-status gx-status-${domain.status}`, DOMAIN_STATUS[domain.status]));
+    card.append(head, el('p', '', domain.description), el('span', 'gx-domain-open', 'OPEN DETAILS ›'));
+    card.addEventListener('click', () => onOpen(domain.id));
     container.append(card);
   }
 }
 
-export function installGlobisentHub({ viewer }) {
+export function installGlobisentHub({ viewer, layers = null }) {
   if (!viewer?.camera) throw new TypeError('GLOBISENT Hub needs the initialized Cesium viewer.');
   if (document.getElementById('globisent-hub')) return () => {};
 
@@ -102,7 +109,8 @@ export function installGlobisentHub({ viewer }) {
     <button class="gx-launch-button" id="gx-open" type="button" aria-expanded="false" aria-controls="globisent-hub">
       <span class="gx-mark">G</span><span>GLOBISENT</span><span class="gx-live-dot" aria-hidden="true"></span>
     </button>
-    <button class="gx-gesture-shortcut" id="gx-gesture-shortcut" type="button" title="Toggle hand gesture control">HAND CONTROL</button>`;
+    <button class="gx-gesture-shortcut" id="gx-gesture-shortcut" type="button" title="Toggle hand gesture control">HAND CONTROL</button>
+    <button class="gx-gesture-shortcut" id="gx-clickinfo-toggle" type="button" title="Show an information card when you click the globe" aria-pressed="true">CLICK INFO: ON</button>`;
   document.body.append(launcher);
 
   const panel = el('aside', 'gx-panel');
@@ -115,6 +123,8 @@ export function installGlobisentHub({ viewer }) {
     </header>
     <nav class="gx-tabs" aria-label="Intelligence hub sections">
       <button type="button" data-tab="news" class="active">NEWS DESK</button>
+      <button type="button" data-tab="markets">MARKETS</button>
+      <button type="button" data-tab="companies">COMPANIES</button>
       <button type="button" data-tab="domains">DOMAINS</button>
       <button type="button" data-tab="gestures">GESTURES</button>
       <button type="button" data-tab="sources">SOURCES</button>
@@ -130,10 +140,12 @@ export function installGlobisentHub({ viewer }) {
       <div class="gx-article-list" id="gx-articles"></div>
       <p class="gx-footnote">Headlines and links are provided by GDELT's public article index. Open each publisher for the original report. Coverage is broad, not exhaustive; source-country coverage and publication times vary.</p>
     </section>
+    <section class="gx-section" data-section="markets"></section>
+    <section class="gx-section" data-section="companies"></section>
     <section class="gx-section" data-section="domains">
-      <div class="gx-section-intro"><div><strong>UNIVERSAL INFORMATION HUB</strong><small>Live map layers, reference datasets and planned connectors</small></div></div>
+      <div class="gx-section-intro"><div><strong>UNIVERSAL INFORMATION HUB</strong><small>Click any domain for live data, headlines and map layers</small></div></div>
       <div class="gx-domain-list" id="gx-domains"></div>
-      <p class="gx-footnote">“Connected” means an existing GLOBISENT base layer or the new news index is present in this build. “Next integration” is not presented as live data.</p>
+      <p class="gx-footnote">“Live map” domains switch on globe layers; “Live data” domains pull open statistics and feeds (World Bank, ECB, USGS, GDACS, CISA, OpenAlex) through the local GLOBISENT server. World Bank indicators are annual; each popup names its sources.</p>
     </section>
     <section class="gx-section" data-section="gestures">
       <div class="gx-section-intro"><div><strong>DUAL INPUT CONTROL</strong><small>Mouse and keyboard stay active when gestures are enabled</small></div><span class="gx-pulse" id="gx-gesture-status">OFF</span></div>
@@ -146,6 +158,9 @@ export function installGlobisentHub({ viewer }) {
     <section class="gx-section" data-section="sources">
       <div class="gx-section-intro"><div><strong>DATA PROVENANCE</strong><small>Know what each signal means and where it came from</small></div></div>
       <div class="gx-source-card"><strong>Global news index</strong><p>GDELT DOC 2.0 indexes articles from monitored publishers and supports topic queries, publication times and source-country metadata.</p><a href="https://blog.gdeltproject.org/gdelt-doc-2-0-api-debuts/" target="_blank" rel="noopener noreferrer">GDELT API documentation ↗</a></div>
+      <div class="gx-source-card"><strong>Fallback news feed</strong><p>When GDELT is rate-limiting or unreachable, the local GLOBISENT server falls back to the Google News RSS search feed. Google limits that feed to personal, non-commercial feed reading; replace it with a licensed provider before any commercial deployment.</p></div>
+      <div class="gx-source-card"><strong>World markets</strong><p>Stock index, commodity futures and currency quotes come from Yahoo Finance's public chart endpoint (exchange-delayed, typically about 15 minutes; personal, non-commercial use). Crypto prices come from CoinGecko's public API. Market open/closed status uses each exchange's published trading session. Not investment advice.</p><a href="https://www.coingecko.com/en/api" target="_blank" rel="noopener noreferrer">CoinGecko API ↗</a></div>
+      <div class="gx-source-card"><strong>Companies</strong><p>Company profiles combine the English Wikipedia summary with Wikidata facts (headquarters, leaders, founders, industry, products, subsidiaries and reported financials) and Yahoo Finance share prices. Wikidata is community-maintained, so leaders and figures can lag behind the latest filings.</p><a href="https://www.wikidata.org/" target="_blank" rel="noopener noreferrer">Wikidata ↗</a></div>
       <div class="gx-source-card"><strong>3D Earth and geospatial signals</strong><p>Inherited from the GOD'S EYE VIEW open-source engine. Imagery, terrain, camera and live data providers have their own attribution, quotas and license terms.</p><a href="https://github.com/bilawalsidhu/gods-eye-view" target="_blank" rel="noopener noreferrer">Upstream project and data-source guide ↗</a></div>
       <div class="gx-source-card"><strong>Hand gesture tracking</strong><p>Gesture interaction is adapted from the MIT-licensed ULTRON Orb UI hand-tracking approach and MediaPipe Tasks Vision.</p><a href="https://sagartamang.com/projects/ultron" target="_blank" rel="noopener noreferrer">ULTRON Orb UI source ↗</a></div>
       <p class="gx-footnote">A live-looking interface is not proof of live data. Each layer should display its provider, update time and any stale/fallback status supplied by its connector.</p>
@@ -171,14 +186,33 @@ export function installGlobisentHub({ viewer }) {
   let refreshTimer = 0;
   let activeRequest = null;
   let destroyed = false;
+  let debounceTimer = 0;
+  let lastLoadedKey = '';
+  let lastLoadedAt = 0;
 
   for (const [key, item] of Object.entries(NEWS_CATEGORIES)) addOption(category, key, item.label);
-  renderDomains(panel.querySelector('#gx-domains'));
+  const companies = createCompanies({ section: panel.querySelector('[data-section="companies"]'), viewer });
+  const domainPopup = createDomainPopup({ layers, companies });
+  renderDomains(panel.querySelector('#gx-domains'), (id) => domainPopup.open(id));
+  const markets = createMarkets({ section: panel.querySelector('[data-section="markets"]'), viewer });
+
+  const clickInfoToggle = launcher.querySelector('#gx-clickinfo-toggle');
+  const syncClickInfo = (on) => {
+    clickInfoToggle.textContent = `CLICK INFO: ${on ? 'ON' : 'OFF'}`;
+    clickInfoToggle.setAttribute('aria-pressed', String(on));
+    clickInfoToggle.classList.toggle('active', on);
+  };
+  const infoCard = createInfoCard({
+    viewer,
+    onEnabledChange: syncClickInfo,
+  });
+  syncClickInfo(infoCard.enabled);
+  clickInfoToggle.addEventListener('click', () => infoCard.setEnabled(!infoCard.enabled));
 
   function openPanel() {
     panel.classList.add('open');
     openButton.setAttribute('aria-expanded', 'true');
-    refreshNews();
+    if (panel.querySelector('[data-section="news"].active')) refreshNews({ reuseRecent: true });
   }
   function closePanel() {
     panel.classList.remove('open');
@@ -187,43 +221,73 @@ export function installGlobisentHub({ viewer }) {
   function setTab(name) {
     panel.querySelectorAll('[data-tab]').forEach((button) => button.classList.toggle('active', button.dataset.tab === name));
     panel.querySelectorAll('[data-section]').forEach((section) => section.classList.toggle('active', section.dataset.section === name));
-    if (name === 'news') refreshNews();
+    if (name === 'news') refreshNews({ reuseRecent: true });
+    if (name === 'markets') markets.activate();
+    else markets.deactivate();
+    if (name === 'companies') companies.activate();
   }
 
-  async function refreshNews() {
+  function currentFilters() {
+    return { category: category.value, region: region.value, q: search.value.trim() };
+  }
+
+  async function refreshNews({ reuseRecent = false } = {}) {
     if (destroyed) return;
+    window.clearTimeout(debounceTimer);
+    const filters = currentFilters();
+    const key = JSON.stringify(filters);
+    if (reuseRecent && key === lastLoadedKey && Date.now() - lastLoadedAt < RECENT_MS) return;
     activeRequest?.abort();
-    activeRequest = new AbortController();
+    const request = new AbortController();
+    activeRequest = request;
     newsStatus.textContent = 'Querying global news index…';
     newsStatus.dataset.state = 'loading';
-    panel.querySelector('#gx-search-button').disabled = true;
+    const searchButton = panel.querySelector('#gx-search-button');
+    searchButton.disabled = true;
     try {
-      const url = buildNewsUrl({ category: category.value, region: region.value, search: search.value });
-      const response = await fetch(url, {
-        signal: activeRequest.signal,
+      // Same-origin proxy: it throttles GDELT, caches and falls back (server/providers/globisentNews.js).
+      const params = new URLSearchParams(filters);
+      const response = await fetch(`${NEWS_ENDPOINT}?${params}`, {
+        signal: AbortSignal.any ? AbortSignal.any([request.signal, AbortSignal.timeout(45000)]) : request.signal,
         headers: { Accept: 'application/json' },
       });
-      if (!response.ok) throw new Error(`News index returned HTTP ${response.status}.`);
-      const payload = await response.json();
-      const items = normalizeNewsResponse(payload);
+      let payload = null;
+      try { payload = await response.json(); } catch { /* handled below */ }
+      if (!response.ok || !payload || payload.error) {
+        throw new Error(payload?.error ?? `News service returned HTTP ${response.status}`);
+      }
+      const items = Array.isArray(payload.articles) ? payload.articles : [];
       renderArticles(articles, items);
-      const updated = new Date().toLocaleTimeString();
-      newsStatus.textContent = `${items.length} articles · refreshed ${updated} · last 24 hours`;
-      newsStatus.dataset.state = 'ready';
+      lastLoadedKey = key;
+      lastLoadedAt = Date.now();
+      const provider = PROVIDER_LABELS[payload.provider] ?? payload.provider ?? 'news index';
+      const fetched = payload.fetchedAt ? new Date(payload.fetchedAt).toLocaleTimeString() : new Date().toLocaleTimeString();
+      const staleNote = payload.stale ? ' · showing saved results, live sources unavailable' : '';
+      newsStatus.textContent = `${items.length} articles · ${provider} · updated ${fetched} · last 24 hours${staleNote}`;
+      newsStatus.dataset.state = payload.stale ? 'error' : 'ready';
     } catch (error) {
-      if (error?.name === 'AbortError') return;
+      if (request.signal.aborted && activeRequest !== request) return;
       renderArticles(articles, []);
-      newsStatus.textContent = `News feed unavailable: ${error?.message ?? 'network error'}. Try Refresh or check the connection.`;
+      const message = error?.name === 'TimeoutError' ? 'request timed out' : error?.message ?? 'network error';
+      newsStatus.textContent = `News feed unavailable: ${message}. Try SEARCH again in a minute or check the connection.`;
       newsStatus.dataset.state = 'error';
     } finally {
-      panel.querySelector('#gx-search-button').disabled = false;
+      if (activeRequest === request) {
+        searchButton.disabled = false;
+        activeRequest = null;
+      }
     }
+  }
+
+  function scheduleRefresh() {
+    window.clearTimeout(debounceTimer);
+    debounceTimer = window.setTimeout(() => refreshNews(), FILTER_DEBOUNCE_MS);
   }
 
   async function startGestures() {
     if (gestureController) return;
     enableGesture.disabled = true;
-    gestureReadout.textContent = 'Requesting camera permission and loading the hand model…';
+    gestureReadout.textContent = 'Requesting camera permission and loading the hand model… the first start can take up to 30 seconds.';
     gestureStatus.textContent = 'LOADING';
     try {
       gestureController = new HandGestureGlobeController({
@@ -256,7 +320,7 @@ export function installGlobisentHub({ viewer }) {
       gestureController?.destroy();
       gestureController = null;
       gestureStatus.textContent = 'ERROR';
-      gestureReadout.textContent = error?.message ?? 'Unable to start hand tracking.';
+      gestureReadout.textContent = describeGestureError(error);
       enableGesture.disabled = false;
       disableGesture.disabled = true;
       cameraPlaceholder.classList.remove('hidden');
@@ -282,15 +346,15 @@ export function installGlobisentHub({ viewer }) {
   openButton.addEventListener('click', () => panel.classList.contains('open') ? closePanel() : openPanel());
   closeButton.addEventListener('click', closePanel);
   panel.querySelectorAll('[data-tab]').forEach((button) => button.addEventListener('click', () => setTab(button.dataset.tab)));
-  panel.querySelector('#gx-search-button').addEventListener('click', refreshNews);
+  panel.querySelector('#gx-search-button').addEventListener('click', () => refreshNews());
   search.addEventListener('keydown', (event) => { if (event.key === 'Enter') refreshNews(); });
-  region.addEventListener('change', refreshNews);
-  category.addEventListener('change', refreshNews);
+  region.addEventListener('change', scheduleRefresh);
+  category.addEventListener('change', scheduleRefresh);
   enableGesture.addEventListener('click', startGestures);
   disableGesture.addEventListener('click', stopGestures);
   gestureShortcut.addEventListener('click', () => {
-    openPanel();
     setTab('gestures');
+    openPanel();
     if (gestureController) stopGestures();
     else startGestures();
   });
@@ -300,8 +364,8 @@ export function installGlobisentHub({ viewer }) {
     if (target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return;
     if (gestureController) stopGestures();
     else {
-      openPanel();
       setTab('gestures');
+      openPanel();
       startGestures();
     }
   };
@@ -311,7 +375,7 @@ export function installGlobisentHub({ viewer }) {
     if (document.visibilityState === 'visible' && panel.classList.contains('open') && panel.querySelector('[data-section="news"].active')) refreshNews();
   }, REFRESH_MS);
   const onVisibility = () => {
-    if (document.visibilityState === 'visible' && panel.classList.contains('open') && panel.querySelector('[data-section="news"].active')) refreshNews();
+    if (document.visibilityState === 'visible' && panel.classList.contains('open') && panel.querySelector('[data-section="news"].active')) refreshNews({ reuseRecent: true });
   };
   document.addEventListener('visibilitychange', onVisibility);
 
@@ -319,10 +383,15 @@ export function installGlobisentHub({ viewer }) {
   const destroy = () => {
     destroyed = true;
     activeRequest?.abort();
+    window.clearTimeout(debounceTimer);
     if (refreshTimer) window.clearInterval(refreshTimer);
     stopGestures();
     document.removeEventListener('keydown', onKeyDown);
     document.removeEventListener('visibilitychange', onVisibility);
+    domainPopup.destroy();
+    markets.destroy();
+    companies.destroy();
+    infoCard.destroy();
     launcher.remove();
     panel.remove();
   };

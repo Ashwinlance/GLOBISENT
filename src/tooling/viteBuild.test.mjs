@@ -304,8 +304,9 @@ test('the CSP admits the event media embeds and the Maps JavaScript API, and no 
     'https://platform.twitter.com',
   ])
     assert.ok(scripts.includes(origin), origin);
-  // Only those three and Google Street View's Maps JavaScript API, never a
-  // wildcard or a scheme.
+  // Only those three, Google Street View's Maps JavaScript API and the one
+  // pinned MediaPipe path GLOBISENT hand control loads; never a wildcard,
+  // a whole CDN or a scheme.
   assert.deepEqual(
     scripts.filter(
       (source) => source.startsWith('http') || source === 'https:',
@@ -315,6 +316,7 @@ test('the CSP admits the event media embeds and the Maps JavaScript API, and no 
       'https://connect.facebook.net',
       'https://platform.twitter.com',
       'https://maps.googleapis.com',
+      'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/',
     ],
   );
   assert.ok(!scripts.some((source) => source.includes('*')));

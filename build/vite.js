@@ -69,7 +69,10 @@ export const BROWSER_CSP = [
   // The Bhote Koshi event's embedded media: the YouTube player API, the
   // Facebook video SDK and X's post widget (src/data/bhoteKoshiEmbeddedMedia.js);
   // and the Maps JavaScript API that Street Level's Google Street View runs on.
-  "script-src 'self' 'unsafe-eval' blob: https://www.youtube.com https://connect.facebook.net https://platform.twitter.com https://maps.googleapis.com",
+  // GLOBISENT hand control loads the pinned MediaPipe Tasks Vision bundle and
+  // its WASM loader (src/globisent/handGestures.js). Only that exact versioned
+  // path is allowed, not the whole CDN; keep it in sync with MEDIAPIPE_VERSION.
+  "script-src 'self' 'unsafe-eval' blob: https://www.youtube.com https://connect.facebook.net https://platform.twitter.com https://maps.googleapis.com https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' data: https://fonts.gstatic.com",
   "img-src 'self' data: blob: https:",

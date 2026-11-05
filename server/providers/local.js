@@ -30,6 +30,12 @@ import { gnssIntegrityProxy } from './gnssIntegrity.js';
 import { ghostMapsProxy } from './ghostMaps.js';
 import { cycloneProxy } from './cyclones.js';
 import { windProxy } from './wind.js';
+import { globisentNewsProxy } from './globisentNews.js';
+import { globisentDomainProxy } from './globisentDomains.js';
+import { globisentPlaceProxy } from './globisentPlace.js';
+import { globisentMarketsProxy } from './globisentMarkets.js';
+import { globisentCompaniesProxy } from './globisentCompanies.js';
+import { globisentBusinessesProxy } from './globisentBusinesses.js';
 
 /**
  * Construct the local provider plugins in their established order.
@@ -79,6 +85,12 @@ function localProviderPlugins({
     firePerimetersProxy(),
     gnssIntegrityProxy(),
     ghostMapsProxy(),
+    globisentNewsProxy(),
+    globisentDomainProxy(),
+    globisentPlaceProxy(),
+    globisentMarketsProxy(),
+    globisentCompaniesProxy(),
+    globisentBusinessesProxy(),
     keySetupEndpoint(),
   ];
 }
