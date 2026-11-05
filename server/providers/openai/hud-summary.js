@@ -1,7 +1,27 @@
+import { createHash } from 'node:crypto';
 import {
   HUD_SUMMARY_INSTRUCTIONS,
   keylessHudSummaryResponse,
 } from '../../../src/hudSummaryResponse.js';
+
+// A key OpenAI has rejected (401/403) is remembered by fingerprint only, and
+// treated as "no key" until OPENAI_API_KEY changes. Without this every camera
+// move re-posts with the dead key and the console fills with 401s.
+let rejectedKeyFingerprint = null;
+const fingerprint = (key) =>
+  createHash('sha256').update(String(key ?? '').trim()).digest('hex');
+
+function usableOpenAiKey() {
+  const key = process.env.OPENAI_API_KEY;
+  if (!String(key ?? '').trim()) return '';
+  if (rejectedKeyFingerprint && fingerprint(key) === rejectedKeyFingerprint) return '';
+  return key;
+}
+
+/** Test hook: forget a rejected key. */
+export function _resetRejectedOpenAiKey() {
+  rejectedKeyFingerprint = null;
+}
 import { enforceRateLimit, openAiRateLimiter } from './rate-limit.js';
 import { readRequestBody } from '../common/request.js';
 import { OPENAI_HUD_SUMMARY_MODEL_DEFAULT } from './constants.js';
@@ -37,7 +57,7 @@ async function handleHudSummary(req, res) {
     res.setHeader('Cache-Control', 'no-store');
     res.end(
       JSON.stringify({
-        configured: !keylessHudSummaryResponse(process.env.OPENAI_API_KEY),
+        configured: !keylessHudSummaryResponse(usableOpenAiKey()),
       }),
     );
     return;
@@ -49,7 +69,7 @@ async function handleHudSummary(req, res) {
     return;
   }
 
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = usableOpenAiKey();
   const keyless = keylessHudSummaryResponse(apiKey);
   if (keyless) {
     res.statusCode = keyless.statusCode;
@@ -88,7 +108,12 @@ async function handleHudSummary(req, res) {
     res.statusCode = response.ok && summary ? 200 : response.status || 502;
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store');
-    if (!response.ok)
+    if (response.status === 401 || response.status === 403) {
+      rejectedKeyFingerprint = fingerprint(apiKey);
+      console.warn(
+        `[hud-summary] OpenAI rejected OPENAI_API_KEY (HTTP ${response.status}); HUD summaries are off until the key is replaced.`,
+      );
+    } else if (!response.ok)
       console.warn(`[hud-summary] upstream HTTP ${response.status}`);
     res.end(
       JSON.stringify({
